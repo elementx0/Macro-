@@ -1,4 +1,4 @@
-// Discord Crypto Bot - News & Price Tracker
+// Discord Crypto Bot - News & Price Tracker (CryptoPanic only version)
 // Required packages:
 // npm install discord.js node-fetch dotenv cron
 
@@ -21,8 +21,7 @@ const config = {
   // You'll set these values in Render's environment variables
   DISCORD_TOKEN: process.env.DISCORD_TOKEN,
   NEWS_CHANNEL_ID: process.env.NEWS_CHANNEL_ID,
-  CRYPTO_COMPARE_API_KEY: process.env.CRYPTO_COMPARE_API_KEY || '', // Optional, but recommended
-  CRYPTOPANIC_API_KEY: process.env.CRYPTOPANIC_API_KEY || '', // For news API
+  CRYPTOPANIC_API_KEY: process.env.CRYPTOPANIC_API_KEY,
   
   // Settings
   PRICE_UPDATE_INTERVAL: 5 * 60 * 1000, // 5 minutes
@@ -50,32 +49,34 @@ client.once('ready', () => {
   newsJob.start();
 });
 
-// Update Bitcoin price in the bot's status
+// Update Bitcoin price in the bot's status using CryptoPanic's currencies data
 async function updateBitcoinPrice() {
   try {
-    const apiUrl = 'https://min-api.cryptocompare.com/data/price';
+    // CryptoPanic also provides price data through their currencies endpoint
+    const apiUrl = 'https://cryptopanic.com/api/v1/currencies/';
     const params = new URLSearchParams({
-      fsym: 'BTC',
-      tsyms: 'USD'
+      auth_token: config.CRYPTOPANIC_API_KEY,
+      currencies: 'BTC'
     });
-    
-    if (config.CRYPTO_COMPARE_API_KEY) {
-      params.append('api_key', config.CRYPTO_COMPARE_API_KEY);
-    }
     
     const response = await fetch(`${apiUrl}?${params}`);
     const data = await response.json();
     
-    if (data && data.USD) {
-      const price = new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD'
-      }).format(data.USD);
-      
-      client.user.setActivity(`BTC: ${price}`, { type: 'WATCHING' });
-      console.log(`Updated Bitcoin price: ${price}`);
+    if (data && data.results && data.results.length > 0) {
+      const btcData = data.results[0];
+      if (btcData.price_usd) {
+        const price = new Intl.NumberFormat('en-US', {
+          style: 'currency',
+          currency: 'USD'
+        }).format(btcData.price_usd);
+        
+        client.user.setActivity(`BTC: ${price}`, { type: 'WATCHING' });
+        console.log(`Updated Bitcoin price: ${price}`);
+      } else {
+        console.error('Failed to get Bitcoin price from data:', btcData);
+      }
     } else {
-      console.error('Failed to get Bitcoin price:', data);
+      console.error('Failed to get Bitcoin price data:', data);
     }
   } catch (error) {
     console.error('Error updating Bitcoin price:', error);
@@ -171,20 +172,33 @@ client.on('messageCreate', async message => {
       );
     } else if (command === 'price') {
       try {
-        const response = await fetch('https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD,EUR,GBP');
+        // Get price from CryptoPanic
+        const apiUrl = 'https://cryptopanic.com/api/v1/currencies/';
+        const params = new URLSearchParams({
+          auth_token: config.CRYPTOPANIC_API_KEY,
+          currencies: 'BTC'
+        });
+        
+        const response = await fetch(`${apiUrl}?${params}`);
         const data = await response.json();
         
-        const embed = new EmbedBuilder()
-          .setColor('#f7931a')
-          .setTitle('Bitcoin Price')
-          .addFields(
-            { name: 'USD', value: `$${data.USD.toLocaleString()}`, inline: true },
-            { name: 'EUR', value: `€${data.EUR.toLocaleString()}`, inline: true },
-            { name: 'GBP', value: `£${data.GBP.toLocaleString()}`, inline: true }
-          )
-          .setTimestamp();
-        
-        message.reply({ embeds: [embed] });
+        if (data && data.results && data.results.length > 0) {
+          const btcData = data.results[0];
+          
+          const embed = new EmbedBuilder()
+            .setColor('#f7931a')
+            .setTitle('Bitcoin Price')
+            .addFields(
+              { name: 'USD', value: `$${btcData.price_usd.toLocaleString()}`, inline: true },
+              { name: '24h Change', value: `${btcData.percent_change_24h > 0 ? '▲' : '▼'} ${Math.abs(btcData.percent_change_24h).toFixed(2)}%`, inline: true },
+              { name: 'Market Cap', value: `$${Math.round(btcData.market_cap_usd).toLocaleString()}`, inline: true }
+            )
+            .setTimestamp();
+          
+          message.reply({ embeds: [embed] });
+        } else {
+          message.reply('Sorry, I couldn\'t fetch the current Bitcoin price.');
+        }
       } catch (error) {
         console.error('Error fetching price for command:', error);
         message.reply('Sorry, I couldn\'t fetch the current Bitcoin price.');
